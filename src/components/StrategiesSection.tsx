@@ -1,4 +1,5 @@
 import { Shield, AlertTriangle, Leaf, Home, Car, Factory, Heart, Droplets } from "lucide-react";
+import ResourceCalculator from "@/components/ResourceCalculator";
 
 const preventive = [
   {
@@ -94,6 +95,9 @@ const StrategiesSection = () => {
             ))}
           </div>
         </div>
+
+        {/* Resource Calculator */}
+        <ResourceCalculator />
       </div>
     </section>
   );
