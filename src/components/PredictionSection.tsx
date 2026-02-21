@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Activity, Thermometer, Droplets, Wind, MapPin, ChevronDown, ChevronUp, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import * as ort from "onnxruntime-web";
+
 
 // Real predicted AQI values from the RandomForestRegressor model (notebook output)
 const stationPredictions = [
@@ -43,49 +45,7 @@ function classifyAqi(aqi: number): { label: string; colorClass: string; bgClass:
 
 // Simplified approximation of the RF model for interactive predictions
 // Trained on: pm25, pm10, wind_speed, temperature, humidity, hour, month
-function approximateAqi(
-  pm25: number,
-  pm10: number,
-  windSpeed: number,
-  temp: number,
-  humidity: number,
-  hour: number,
-  month: number
-): number {
 
-  // --- 1. Core pollutant contribution (calibrated to RF outputs) ---
-  // Based on your station data (~PM25: 85–110, PM10: 150–180 → AQI: 240–295)
-
-  let aqi = (pm25 * 1.35) + (pm10 * 0.55);
-
-  // --- 2. Wind dispersion (strong effect at low wind) ---
-  aqi -= 10 * Math.log(1 + windSpeed);
-
-  // --- 3. Humidity amplification ---
-  if (humidity > 50) {
-    aqi += (humidity - 50) * 0.5;
-  }
-
-  // --- 4. Temperature inversion (Delhi winter effect) ---
-  if (temp >= 5 && temp <= 20) {
-    aqi += 18;
-  }
-
-  // --- 5. Rush hour traffic boost ---
-  if ((hour >= 8 && hour <= 10) || (hour >= 18 && hour <= 20)) {
-    aqi += 20;
-  }
-
-  // --- 6. Seasonal pattern (North India pollution cycle) ---
-  if (month >= 10 || month <= 2) {
-    aqi += 40;   // Winter severe
-  } else if (month >= 3 && month <= 5) {
-    aqi += 12;   // Dust season
-  }
-
-  // Clamp to CPCB scale
-  return Math.max(0, Math.min(500, Math.round(aqi)));
-}
 const worstStation = stationPredictions.reduce((a, b) => (a.aqi > b.aqi ? a : b));
 
 const PredictionSection = () => {
@@ -93,29 +53,103 @@ const PredictionSection = () => {
   const [form, setForm] = useState({ pm25: "", pm10: "", windSpeed: "", temp: "", humidity: "", hour: "", month: "" });
   const [customAqi, setCustomAqi] = useState<number | null>(null);
   const [formError, setFormError] = useState("");
+  const [session, setSession] = useState<ort.InferenceSession | null>(null);
+
+  useEffect(() => {
+  const loadModel = async () => {
+    try {
+      const s = await ort.InferenceSession.create("/aqi_model.onnx");
+      setSession(s);
+      console.log("ONNX model loaded");
+    } catch (err) {
+      console.error("Error loading model:", err);
+    }
+  };
+  loadModel();
+}, []);
+const runPrediction = async (values: number[]) => {
+  if (!session) {
+    setFormError("Model is still loading. Please wait...");
+    return null;
+  }
+
+const inputData = new Float32Array(values);
+const tensor = new ort.Tensor("float32", inputData, [1, 2])
+
+  const feeds = {
+  [session.inputNames[0]]: tensor
+};
+
+  
+
+const results = await session.run({
+  [session.outputNames[0]]: tensor
+})
+
+const output = results[session.outputNames[0]] as ort.Tensor;
+const outputData = output.data as Float32Array;
+
+  return Math.round(Number(outputData[0]));
+};
 
   const displayed = showAll ? stationPredictions : stationPredictions.slice(0, 8);
 
-  const handlePredict = () => {
-    setFormError("");
-    const vals = {
-      pm25: parseFloat(form.pm25),
-      pm10: parseFloat(form.pm10),
-      windSpeed: parseFloat(form.windSpeed),
-      temp: parseFloat(form.temp),
-      humidity: parseFloat(form.humidity),
-      hour: parseInt(form.hour),
-      month: parseInt(form.month),
-    };
-    if (Object.values(vals).some(isNaN)) {
-      setFormError("Please fill in all fields with valid numbers.");
-      return;
-    }
-    if (vals.hour < 0 || vals.hour > 23) { setFormError("Hour must be 0–23."); return; }
-    if (vals.month < 1 || vals.month > 12) { setFormError("Month must be 1–12."); return; }
-    if (vals.humidity < 0 || vals.humidity > 100) { setFormError("Humidity must be 0–100."); return; }
-    setCustomAqi(approximateAqi(vals.pm25, vals.pm10, vals.windSpeed, vals.temp, vals.humidity, vals.hour, vals.month));
+  const handlePredict = async () => {
+  setFormError("");
+
+  const vals = {
+    pm25: parseFloat(form.pm25),
+    pm10: parseFloat(form.pm10),
+    windSpeed: parseFloat(form.windSpeed),
+    temp: parseFloat(form.temp),
+    humidity: parseFloat(form.humidity),
+    hour: parseInt(form.hour),
+    month: parseInt(form.month),
   };
+  console.log("Sending values:", [
+  vals.pm25,
+  vals.pm10,
+  vals.windSpeed,
+  vals.temp,
+  vals.humidity,
+  vals.hour,
+  vals.month
+]);
+
+  if (Object.values(vals).some(isNaN)) {
+    setFormError("Please fill in all fields with valid numbers.");
+    return;
+  }
+
+  if (vals.hour < 0 || vals.hour > 23) {
+    setFormError("Hour must be 0–23.");
+    return;
+  }
+
+  if (vals.month < 1 || vals.month > 12) {
+    setFormError("Month must be 1–12.");
+    return;
+  }
+
+  if (vals.humidity < 0 || vals.humidity > 100) {
+    setFormError("Humidity must be 0–100.");
+    return;
+  }
+
+  const prediction = await runPrediction([
+    vals.pm25,
+    vals.pm10,
+    vals.windSpeed,
+    vals.temp,
+    vals.humidity,
+    vals.hour,
+    vals.month
+  ]);
+
+  if (prediction !== null) {
+    setCustomAqi(prediction);
+  }
+};
 
   const customCat = customAqi !== null ? classifyAqi(customAqi) : null;
 
