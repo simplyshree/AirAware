@@ -1,9 +1,9 @@
 # AirAware
-View Here: [beairaware.vercel.app](beairaware.vercel.app)
+View Here: [https://beairaware.vercel.app](https://beairaware.vercel.app)
 
 A machine learning powered Air Quality Index (AQI) prediction web app for Delhi NCR.
 
-This project uses a trained ML model exported to ONNX format and runs directly in the browser using onnxruntime-web — no backend required.
+This project uses a trained ML model exported to ONNX format and runs directly in the browser using onnxruntime-web.
 
 ---
 
